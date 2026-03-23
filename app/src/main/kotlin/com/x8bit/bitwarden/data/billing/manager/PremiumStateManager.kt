@@ -1,5 +1,6 @@
 package com.x8bit.bitwarden.data.billing.manager
 
+import com.bitwarden.core.data.manager.model.FlagKey
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -15,6 +16,13 @@ interface PremiumStateManager {
      * or `false` otherwise.
      */
     val isPremiumUpgradeBannerEligibleFlow: StateFlow<Boolean>
+
+    /**
+     * Emits `true` when the in-app upgrade flow is available (i.e., in-app billing is
+     * supported and the [FlagKey.MobilePremiumUpgrade] feature flag is enabled),
+     * or `false` otherwise.
+     */
+    val isInAppUpgradeAvailableFlow: StateFlow<Boolean>
 
     /**
      * Marks the Premium upgrade banner as dismissed for the current user.

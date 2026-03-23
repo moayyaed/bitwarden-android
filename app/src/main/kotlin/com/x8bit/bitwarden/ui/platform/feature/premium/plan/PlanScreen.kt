@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions")
+
 package com.x8bit.bitwarden.ui.platform.feature.premium.plan
 
 import androidx.compose.foundation.layout.Column
@@ -34,6 +36,7 @@ import com.bitwarden.ui.platform.base.util.cardStyle
 import com.bitwarden.ui.platform.base.util.standardHorizontalMargin
 import com.bitwarden.ui.platform.components.appbar.BitwardenTopAppBar
 import com.bitwarden.ui.platform.components.button.BitwardenFilledButton
+import com.bitwarden.ui.platform.components.button.BitwardenOutlinedButton
 import com.bitwarden.ui.platform.components.content.BitwardenContentBlock
 import com.bitwarden.ui.platform.components.content.model.ContentBlockData
 import com.bitwarden.ui.platform.components.dialog.BitwardenLoadingDialog
@@ -52,7 +55,8 @@ import com.x8bit.bitwarden.ui.platform.feature.premium.plan.handlers.PlanHandler
 import com.x8bit.bitwarden.ui.platform.model.AuthTabLaunchers
 
 /**
- * The screen for the plan -- shows upgrade flow for free users.
+ * The screen for the plan — shows upgrade flow for free users or subscription
+ * management for premium users.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,11 +79,15 @@ fun PlanScreen(
                 )
             }
 
+            is PlanEvent.LaunchPortal -> {
+                intentManager.launchUri(event.url.toUri())
+            }
+
             PlanEvent.NavigateBack -> onNavigateBack()
         }
     }
 
-    FreeDialogs(
+    PlanDialogs(
         dialogState = state.dialogState,
         handlers = handlers,
     )
@@ -91,7 +99,7 @@ fun PlanScreen(
             .nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {
             BitwardenTopAppBar(
-                title = stringResource(id = BitwardenString.upgrade_to_premium),
+                title = stringResource(id = state.title),
                 scrollBehavior = scrollBehavior,
                 navigationIcon = rememberVectorPainter(id = state.navigationIcon),
                 navigationIconContentDescription = stringResource(
@@ -109,13 +117,42 @@ fun PlanScreen(
                     handlers = handlers,
                 )
             }
+            is PlanState.ViewState.Premium -> {
+                PremiumContent(
+                    viewState = viewState,
+                    isDialogShowing = state.dialogState != null,
+                    handlers = handlers,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun FreeDialogs(
+private fun PlanDialogs(
     dialogState: PlanState.DialogState?,
+    handlers: PlanHandlers,
+) {
+    when (dialogState) {
+        is PlanState.DialogState.CheckoutError,
+        is PlanState.DialogState.GetPricingError,
+        is PlanState.DialogState.WaitingForPayment,
+        is PlanState.DialogState.PendingUpgrade,
+        is PlanState.DialogState.Loading,
+        -> FreeDialogs(dialogState = dialogState, handlers = handlers)
+
+        is PlanState.DialogState.CancelConfirmation,
+        is PlanState.DialogState.LoadingPortal,
+        is PlanState.DialogState.PortalError,
+        -> PremiumDialogs(dialogState = dialogState, handlers = handlers)
+
+        null -> Unit
+    }
+}
+
+@Composable
+private fun FreeDialogs(
+    dialogState: PlanState.DialogState,
     handlers: PlanHandlers,
 ) {
     when (dialogState) {
@@ -173,9 +210,60 @@ private fun FreeDialogs(
             BitwardenLoadingDialog(text = dialogState.message())
         }
 
-        null -> Unit
+        else -> Unit
     }
 }
+
+@Composable
+private fun PremiumDialogs(
+    dialogState: PlanState.DialogState,
+    handlers: PlanHandlers,
+) {
+    when (dialogState) {
+        is PlanState.DialogState.CancelConfirmation -> {
+            BitwardenTwoButtonDialog(
+                title = stringResource(id = BitwardenString.cancel_premium),
+                message = stringResource(
+                    id = BitwardenString.cancel_premium_confirmation,
+                    dialogState.nextRenewalDate,
+                ),
+                confirmButtonText = stringResource(
+                    id = BitwardenString.cancel_now,
+                ),
+                dismissButtonText = stringResource(id = BitwardenString.close),
+                onConfirmClick = handlers.onConfirmCancelClick,
+                onDismissClick = handlers.onDismissCancelConfirmation,
+                onDismissRequest = handlers.onDismissCancelConfirmation,
+            )
+        }
+
+        is PlanState.DialogState.LoadingPortal -> {
+            BitwardenLoadingDialog(
+                text = stringResource(id = BitwardenString.loading_portal),
+            )
+        }
+
+        is PlanState.DialogState.PortalError -> {
+            BitwardenTwoButtonDialog(
+                title = stringResource(id = BitwardenString.portal_error),
+                message = stringResource(
+                    id = BitwardenString.trouble_loading_portal,
+                ),
+                confirmButtonText = stringResource(
+                    id = BitwardenString.try_again,
+                ),
+                dismissButtonText = stringResource(id = BitwardenString.close),
+                onConfirmClick = handlers.onManagePlanClick,
+                onDismissClick = handlers.onDismissPortalError,
+                onDismissRequest = handlers.onDismissPortalError,
+            )
+        }
+
+        else -> Unit
+    }
+}
+
+// region Free content
 
 @Composable
 private fun FreeContent(
@@ -331,8 +419,152 @@ private fun PlanScreenFreeAccount_preview() {
                     onGoBackClick = {},
                     onSyncClick = {},
                     onContinueClick = {},
+                    onManagePlanClick = {},
+                    onCancelPremiumClick = {},
+                    onConfirmCancelClick = {},
+                    onDismissCancelConfirmation = {},
+                    onDismissPortalError = {},
                 ),
             )
         }
     }
 }
+
+// endregion Free content
+
+// region Premium content
+
+@Composable
+private fun PremiumContent(
+    viewState: PlanState.ViewState.Premium,
+    isDialogShowing: Boolean,
+    handlers: PlanHandlers,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(top = 24.dp),
+    ) {
+        PremiumSubscriptionCard(
+            billingAmount = "${viewState.rate} ${stringResource(
+                id = BitwardenString.per_month,
+            )}",
+            nextRenewalDate = viewState.nextRenewalDate,
+            modifier = Modifier.standardHorizontalMargin(),
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        BitwardenFilledButton(
+            label = stringResource(id = BitwardenString.manage_plan),
+            onClick = handlers.onManagePlanClick,
+            isEnabled = !isDialogShowing,
+            icon = rememberVectorPainter(
+                id = BitwardenDrawable.ic_external_link,
+            ),
+            modifier = Modifier
+                .standardHorizontalMargin()
+                .fillMaxWidth()
+                .testTag("ManagePlanButton"),
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        BitwardenOutlinedButton(
+            label = stringResource(id = BitwardenString.cancel_premium),
+            onClick = handlers.onCancelPremiumClick,
+            isEnabled = !isDialogShowing,
+            modifier = Modifier
+                .standardHorizontalMargin()
+                .fillMaxWidth()
+                .testTag("CancelPremiumButton"),
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun PremiumSubscriptionCard(
+    billingAmount: String,
+    nextRenewalDate: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .cardStyle(cardStyle = CardStyle.Full),
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(all = 16.dp),
+        ) {
+            Text(
+                text = stringResource(id = BitwardenString.premium),
+                style = BitwardenTheme.typography.headlineMedium,
+                color = BitwardenTheme.colorScheme.text.primary,
+                modifier = Modifier.testTag("PremiumHeaderText"),
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = stringResource(id = BitwardenString.current_plan),
+                style = BitwardenTheme.typography.bodyMedium,
+                color = BitwardenTheme.colorScheme.text.secondary,
+                modifier = Modifier.testTag("CurrentPlanText"),
+            )
+        }
+
+        BitwardenHorizontalDivider(
+            modifier = Modifier.padding(start = 16.dp),
+        )
+
+        SubscriptionDetailRow(
+            label = stringResource(id = BitwardenString.billing_amount),
+            value = billingAmount,
+            testTag = "BillingAmountRow",
+        )
+
+        BitwardenHorizontalDivider(
+            modifier = Modifier.padding(start = 16.dp),
+        )
+
+        SubscriptionDetailRow(
+            label = stringResource(
+                id = BitwardenString.next_renewal_date,
+            ),
+            value = nextRenewalDate,
+            testTag = "NextRenewalDateRow",
+        )
+    }
+}
+
+@Composable
+private fun SubscriptionDetailRow(
+    label: String,
+    value: String,
+    testTag: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .testTag(testTag),
+    ) {
+        Text(
+            text = label,
+            style = BitwardenTheme.typography.bodyMedium,
+            color = BitwardenTheme.colorScheme.text.secondary,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = BitwardenTheme.typography.bodyMedium,
+            color = BitwardenTheme.colorScheme.text.primary,
+        )
+    }
+}
+
+// endregion Premium content

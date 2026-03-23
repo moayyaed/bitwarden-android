@@ -1210,6 +1210,7 @@ Do you want to switch to this account?</string>
     <string name="archive_unavailable">Archive unavailable</string>
     <string name="archiving_items_is_a_premium_feature">Archiving items is a Premium feature. Your current plan does not include access to this feature.</string>
     <string name="upgrade_to_premium">Upgrade to Premium</string>
+    <string name="plan">Plan</string>
     <string name="unlock_advanced_security_features">Unlock advanced security features</string>
     <string name="a_premium_plan_gives_you_more_tools_to_stay_secure_and_in_control">A Premium plan gives you more tools to stay secure and in control.</string>
     <string name="this_item_is_archived">This item is archived.</string>
@@ -1257,4 +1258,14 @@ Do you want to switch to this account?</string>
     <string name="go_back">Go back</string>
     <string name="allow_camera_access">Allow camera access</string>
     <string name="to_scan_your_card_we_need_access_to_your_camera">To scan your card, we’ll need access to your camera. You can change this anytime in your device settings.</string>
+    <string name="current_plan">Current plan</string>
+    <string name="billing_amount">Billing amount</string>
+    <string name="next_renewal_date">Next renewal date</string>
+    <string name="manage_plan">Manage plan</string>
+    <string name="cancel_premium">Cancel Premium</string>
+    <string name="cancel_now">Cancel now</string>
+    <string name="cancel_premium_confirmation">You’ll continue to have Premium access until %1$s.</string>
+    <string name="loading_portal">Loading\u2026</string>
+    <string name="portal_error">Something went wrong</string>
+    <string name="trouble_loading_portal">We had trouble loading the management portal, so try again.</string>
 </resources>

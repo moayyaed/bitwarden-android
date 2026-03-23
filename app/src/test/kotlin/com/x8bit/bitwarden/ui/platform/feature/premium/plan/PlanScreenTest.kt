@@ -47,6 +47,7 @@ class PlanScreenTest : BitwardenComposeTest() {
         every {
             startAuthTab(uri = any(), authTabData = any(), launcher = any())
         } just runs
+        every { launchUri(any()) } just runs
     }
 
     @Before
@@ -94,6 +95,15 @@ class PlanScreenTest : BitwardenComposeTest() {
                 authTabData = authTabData,
                 launcher = premiumCheckoutLauncher,
             )
+        }
+    }
+
+    @Test
+    fun `LaunchPortal event should call launchUri`() {
+        val url = "https://billing.stripe.com/portal123"
+        mutableEventFlow.tryEmit(PlanEvent.LaunchPortal(url = url))
+        verify {
+            intentManager.launchUri(url.toUri())
         }
     }
 
@@ -461,6 +471,138 @@ class PlanScreenTest : BitwardenComposeTest() {
     }
 
     // endregion GetPricingError dialog tests
+
+    // region Premium content tests
+
+    @Test
+    fun `premium content should render subscription details`() {
+        mutableStateFlow.update { DEFAULT_PREMIUM_STATE }
+        composeTestRule
+            .onNodeWithTag("PremiumHeaderText")
+            .assertExists()
+        composeTestRule
+            .onNodeWithTag("CurrentPlanText")
+            .assertExists()
+        composeTestRule
+            .onNodeWithTag("BillingAmountRow")
+            .assertExists()
+        composeTestRule
+            .onNodeWithTag("NextRenewalDateRow")
+            .assertExists()
+    }
+
+    @Test
+    fun `manage plan button click should send ManagePlanClick action`() {
+        mutableStateFlow.update { DEFAULT_PREMIUM_STATE }
+        composeTestRule
+            .onNodeWithTag("ManagePlanButton")
+            .performClick()
+        verify {
+            viewModel.trySendAction(PlanAction.ManagePlanClick)
+        }
+    }
+
+    @Test
+    fun `cancel premium button click should send CancelPremiumClick action`() {
+        mutableStateFlow.update { DEFAULT_PREMIUM_STATE }
+        composeTestRule
+            .onNodeWithTag("CancelPremiumButton")
+            .performClick()
+        verify {
+            viewModel.trySendAction(PlanAction.CancelPremiumClick)
+        }
+    }
+
+    @Test
+    fun `manage plan button should be disabled when dialog is showing`() {
+        mutableStateFlow.update {
+            DEFAULT_PREMIUM_STATE.copy(
+                dialogState = PlanState.DialogState.LoadingPortal,
+            )
+        }
+        composeTestRule
+            .onNodeWithTag("ManagePlanButton")
+            .assertIsNotEnabled()
+    }
+
+    @Test
+    fun `cancel confirmation dialog should render`() {
+        mutableStateFlow.update {
+            DEFAULT_PREMIUM_STATE.copy(
+                dialogState =
+                    PlanState.DialogState.CancelConfirmation(nextRenewalDate = "April 2, 2026"),
+            )
+        }
+        composeTestRule
+            .onAllNodesWithText("Cancel Premium")
+            .filterToOne(hasAnyAncestor(isDialog()))
+            .assertExists()
+    }
+
+    @Suppress("MaxLineLength")
+    @Test
+    fun `cancel confirmation dialog confirm click should send ConfirmCancelClick`() {
+        mutableStateFlow.update {
+            DEFAULT_PREMIUM_STATE.copy(
+                dialogState =
+                    PlanState.DialogState.CancelConfirmation(nextRenewalDate = "April 2, 2026"),
+            )
+        }
+        composeTestRule
+            .onAllNodesWithText("Cancel now")
+            .filterToOne(hasAnyAncestor(isDialog()))
+            .performClick()
+        verify {
+            viewModel.trySendAction(PlanAction.ConfirmCancelClick)
+        }
+    }
+
+    @Test
+    fun `cancel confirmation dialog dismiss click should send DismissCancelConfirmation`() {
+        mutableStateFlow.update {
+            DEFAULT_PREMIUM_STATE.copy(
+                dialogState =
+                    PlanState.DialogState.CancelConfirmation(nextRenewalDate = "April 2, 2026"),
+            )
+        }
+        composeTestRule
+            .onAllNodesWithText("Close")
+            .filterToOne(hasAnyAncestor(isDialog()))
+            .performClick()
+        verify {
+            viewModel.trySendAction(
+                PlanAction.DismissCancelConfirmation,
+            )
+        }
+    }
+
+    @Test
+    fun `portal error dialog should render`() {
+        mutableStateFlow.update {
+            DEFAULT_PREMIUM_STATE.copy(
+                dialogState = PlanState.DialogState.PortalError,
+            )
+        }
+        composeTestRule
+            .onAllNodesWithText("Something went wrong")
+            .filterToOne(hasAnyAncestor(isDialog()))
+            .assertExists()
+    }
+
+    @Test
+    fun `portal loading dialog should render`() {
+        mutableStateFlow.update {
+            DEFAULT_PREMIUM_STATE.copy(
+                dialogState = PlanState.DialogState.LoadingPortal,
+            )
+        }
+        composeTestRule
+            .onAllNodesWithText("Loading\u2026")
+            .filterToOne(hasAnyAncestor(isDialog()))
+            .assertExists()
+    }
+
+    // endregion Premium content tests
 }
 
 private val DEFAULT_FREE_STATE = PlanState(
@@ -469,6 +611,15 @@ private val DEFAULT_FREE_STATE = PlanState(
         rate = "$1.65",
         checkoutUrl = null,
         isAwaitingPremiumStatus = false,
+    ),
+    dialogState = null,
+)
+
+private val DEFAULT_PREMIUM_STATE = PlanState(
+    planMode = PlanMode.Modal,
+    viewState = PlanState.ViewState.Premium(
+        rate = "$1.65",
+        nextRenewalDate = "April 2, 2026",
     ),
     dialogState = null,
 )

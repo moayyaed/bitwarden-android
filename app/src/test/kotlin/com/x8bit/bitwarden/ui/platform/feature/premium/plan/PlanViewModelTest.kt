@@ -12,6 +12,7 @@ import com.x8bit.bitwarden.data.auth.repository.AuthRepository
 import com.x8bit.bitwarden.data.auth.repository.model.UserState
 import com.x8bit.bitwarden.data.billing.repository.BillingRepository
 import com.x8bit.bitwarden.data.billing.repository.model.CheckoutSessionResult
+import com.x8bit.bitwarden.data.billing.repository.model.CustomerPortalResult
 import com.x8bit.bitwarden.data.billing.repository.model.PremiumPlanPricingResult
 import com.x8bit.bitwarden.data.billing.util.PremiumCheckoutCallbackResult
 import com.x8bit.bitwarden.data.platform.manager.SpecialCircumstanceManager
@@ -611,6 +612,258 @@ class PlanViewModelTest : BaseViewModelTest() {
 
     // endregion Free user path
 
+    // region Premium user path
+
+    @Test
+    fun `initial state should be Premium ViewState for premium user`() =
+        runTest {
+            mutableUserStateFlow.value = DEFAULT_USER_STATE.copy(
+                accounts = listOf(
+                    DEFAULT_ACCOUNT.copy(isPremium = true),
+                ),
+            )
+
+            val viewModel = createViewModel()
+
+            viewModel.stateFlow.test {
+                assertEquals(DEFAULT_PREMIUM_STATE, awaitItem())
+            }
+        }
+
+    @Test
+    fun `initial state should use Standard PlanMode for premium settings path`() =
+        runTest {
+            mutableUserStateFlow.value = DEFAULT_USER_STATE.copy(
+                accounts = listOf(
+                    DEFAULT_ACCOUNT.copy(isPremium = true),
+                ),
+            )
+
+            val viewModel = createViewModel(
+                planMode = PlanMode.Standard,
+            )
+
+            viewModel.stateFlow.test {
+                assertEquals(
+                    DEFAULT_PREMIUM_STANDARD_STATE,
+                    awaitItem(),
+                )
+            }
+        }
+
+    @Test
+    fun `ManagePlanClick should show LoadingPortal then emit LaunchPortal on success`() =
+        runTest {
+            val portalUrl = "https://billing.stripe.com/portal123"
+            coEvery {
+                mockBillingRepository.getPortalUrl()
+            } returns CustomerPortalResult.Success(url = portalUrl)
+
+            mutableUserStateFlow.value = DEFAULT_USER_STATE.copy(
+                accounts = listOf(
+                    DEFAULT_ACCOUNT.copy(isPremium = true),
+                ),
+            )
+            val viewModel = createViewModel()
+
+            viewModel.stateEventFlow(backgroundScope) { stateFlow, eventFlow ->
+                assertEquals(DEFAULT_PREMIUM_STATE, stateFlow.awaitItem())
+
+                viewModel.trySendAction(PlanAction.ManagePlanClick)
+
+                assertEquals(
+                    DEFAULT_PREMIUM_STATE.copy(
+                        dialogState = PlanState.DialogState.LoadingPortal,
+                    ),
+                    stateFlow.awaitItem(),
+                )
+
+                // Dialog clears on success.
+                assertEquals(DEFAULT_PREMIUM_STATE, stateFlow.awaitItem())
+
+                assertEquals(
+                    PlanEvent.LaunchPortal(url = portalUrl),
+                    eventFlow.awaitItem(),
+                )
+            }
+        }
+
+    @Test
+    fun `ManagePlanClick should show LoadingPortal then PortalError on failure`() =
+        runTest {
+            coEvery {
+                mockBillingRepository.getPortalUrl()
+            } returns CustomerPortalResult.Error(
+                error = RuntimeException("Network error"),
+            )
+
+            mutableUserStateFlow.value = DEFAULT_USER_STATE.copy(
+                accounts = listOf(
+                    DEFAULT_ACCOUNT.copy(isPremium = true),
+                ),
+            )
+            val viewModel = createViewModel()
+
+            viewModel.stateFlow.test {
+                assertEquals(DEFAULT_PREMIUM_STATE, awaitItem())
+
+                viewModel.trySendAction(PlanAction.ManagePlanClick)
+
+                assertEquals(
+                    DEFAULT_PREMIUM_STATE.copy(
+                        dialogState = PlanState.DialogState.LoadingPortal,
+                    ),
+                    awaitItem(),
+                )
+                assertEquals(
+                    DEFAULT_PREMIUM_STATE.copy(
+                        dialogState = PlanState.DialogState.PortalError,
+                    ),
+                    awaitItem(),
+                )
+            }
+        }
+
+    @Test
+    fun `CancelPremiumClick should show CancelConfirmation dialog`() =
+        runTest {
+            mutableUserStateFlow.value = DEFAULT_USER_STATE.copy(
+                accounts = listOf(
+                    DEFAULT_ACCOUNT.copy(isPremium = true),
+                ),
+            )
+            val viewModel = createViewModel()
+
+            viewModel.stateFlow.test {
+                assertEquals(DEFAULT_PREMIUM_STATE, awaitItem())
+
+                viewModel.trySendAction(PlanAction.CancelPremiumClick)
+
+                assertEquals(
+                    DEFAULT_PREMIUM_STATE.copy(
+                        dialogState =
+                            PlanState.DialogState.CancelConfirmation(nextRenewalDate = "--"),
+                    ),
+                    awaitItem(),
+                )
+            }
+        }
+
+    @Test
+    fun `ConfirmCancelClick should show LoadingPortal then emit LaunchPortal on success`() =
+        runTest {
+            val portalUrl = "https://billing.stripe.com/portal123"
+            coEvery {
+                mockBillingRepository.getPortalUrl()
+            } returns CustomerPortalResult.Success(url = portalUrl)
+
+            mutableUserStateFlow.value = DEFAULT_USER_STATE.copy(
+                accounts = listOf(
+                    DEFAULT_ACCOUNT.copy(isPremium = true),
+                ),
+            )
+            val viewModel = createViewModel(
+                initialState = DEFAULT_PREMIUM_STATE.copy(
+                    dialogState =
+                        PlanState.DialogState.CancelConfirmation(nextRenewalDate = "--"),
+                ),
+                pricingResult = null,
+            )
+
+            viewModel.stateEventFlow(backgroundScope) { stateFlow, eventFlow ->
+                assertEquals(
+                    DEFAULT_PREMIUM_STATE.copy(
+                        dialogState =
+                            PlanState.DialogState.CancelConfirmation(nextRenewalDate = "--"),
+                    ),
+                    stateFlow.awaitItem(),
+                )
+
+                viewModel.trySendAction(PlanAction.ConfirmCancelClick)
+
+                assertEquals(
+                    DEFAULT_PREMIUM_STATE.copy(
+                        dialogState =
+                            PlanState.DialogState.LoadingPortal,
+                    ),
+                    stateFlow.awaitItem(),
+                )
+
+                // Dialog clears on success.
+                assertEquals(
+                    DEFAULT_PREMIUM_STATE,
+                    stateFlow.awaitItem(),
+                )
+
+                assertEquals(
+                    PlanEvent.LaunchPortal(url = portalUrl),
+                    eventFlow.awaitItem(),
+                )
+            }
+        }
+
+    @Test
+    fun `DismissCancelConfirmation should clear dialog`() = runTest {
+        mutableUserStateFlow.value = DEFAULT_USER_STATE.copy(
+            accounts = listOf(
+                DEFAULT_ACCOUNT.copy(isPremium = true),
+            ),
+        )
+        val viewModel = createViewModel(
+            initialState = DEFAULT_PREMIUM_STATE.copy(
+                dialogState =
+                    PlanState.DialogState.CancelConfirmation(nextRenewalDate = "--"),
+            ),
+            pricingResult = null,
+        )
+
+        viewModel.stateFlow.test {
+            assertEquals(
+                DEFAULT_PREMIUM_STATE.copy(
+                    dialogState =
+                        PlanState.DialogState.CancelConfirmation(nextRenewalDate = "--"),
+                ),
+                awaitItem(),
+            )
+
+            viewModel.trySendAction(
+                PlanAction.DismissCancelConfirmation,
+            )
+
+            assertEquals(DEFAULT_PREMIUM_STATE, awaitItem())
+        }
+    }
+
+    @Test
+    fun `DismissPortalError should clear dialog`() = runTest {
+        mutableUserStateFlow.value = DEFAULT_USER_STATE.copy(
+            accounts = listOf(
+                DEFAULT_ACCOUNT.copy(isPremium = true),
+            ),
+        )
+        val viewModel = createViewModel(
+            initialState = DEFAULT_PREMIUM_STATE.copy(
+                dialogState = PlanState.DialogState.PortalError,
+            ),
+            pricingResult = null,
+        )
+
+        viewModel.stateFlow.test {
+            assertEquals(
+                DEFAULT_PREMIUM_STATE.copy(
+                    dialogState = PlanState.DialogState.PortalError,
+                ),
+                awaitItem(),
+            )
+
+            viewModel.trySendAction(PlanAction.DismissPortalError)
+
+            assertEquals(DEFAULT_PREMIUM_STATE, awaitItem())
+        }
+    }
+
+    // endregion Premium user path
+
     // region Pricing fetch
 
     @Test
@@ -742,6 +995,34 @@ class PlanViewModelTest : BaseViewModelTest() {
             }
         }
 
+    @Test
+    fun `init should fetch pricing and update billingAmount for premium user`() =
+        runTest {
+            coEvery {
+                mockBillingRepository.getPremiumPlanPricing()
+            } returns DEFAULT_PRICING_SUCCESS
+
+            mutableUserStateFlow.value = DEFAULT_USER_STATE.copy(
+                accounts = listOf(
+                    DEFAULT_ACCOUNT.copy(isPremium = true),
+                ),
+            )
+
+            val viewModel = createViewModel()
+
+            viewModel.stateFlow.test {
+                assertEquals(
+                    DEFAULT_PREMIUM_STATE.copy(
+                        viewState = PlanState.ViewState.Premium(
+                            rate = DEFAULT_RATE,
+                            nextRenewalDate = "--",
+                        ),
+                    ),
+                    awaitItem(),
+                )
+            }
+        }
+
     // endregion Pricing fetch
 
     private fun createViewModel(
@@ -803,6 +1084,26 @@ private val DEFAULT_FREE_STATE = PlanState(
         rate = "$1.67",
         checkoutUrl = null,
         isAwaitingPremiumStatus = false,
+    ),
+    dialogState = null,
+)
+
+private const val DEFAULT_RATE = "$1.67"
+
+private val DEFAULT_PREMIUM_STATE = PlanState(
+    planMode = PlanMode.Modal,
+    viewState = PlanState.ViewState.Premium(
+        rate = DEFAULT_RATE,
+        nextRenewalDate = "--",
+    ),
+    dialogState = null,
+)
+
+private val DEFAULT_PREMIUM_STANDARD_STATE = PlanState(
+    planMode = PlanMode.Standard,
+    viewState = PlanState.ViewState.Premium(
+        rate = DEFAULT_RATE,
+        nextRenewalDate = "--",
     ),
     dialogState = null,
 )

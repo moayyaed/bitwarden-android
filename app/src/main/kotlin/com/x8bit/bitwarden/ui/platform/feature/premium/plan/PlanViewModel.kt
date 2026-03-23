@@ -19,6 +19,7 @@ import com.x8bit.bitwarden.data.auth.repository.AuthRepository
 import com.x8bit.bitwarden.data.auth.repository.model.UserState
 import com.x8bit.bitwarden.data.billing.repository.BillingRepository
 import com.x8bit.bitwarden.data.billing.repository.model.CheckoutSessionResult
+import com.x8bit.bitwarden.data.billing.repository.model.CustomerPortalResult
 import com.x8bit.bitwarden.data.billing.repository.model.PremiumPlanPricingResult
 import com.x8bit.bitwarden.data.platform.manager.SpecialCircumstanceManager
 import com.x8bit.bitwarden.data.platform.manager.model.SpecialCircumstance
@@ -45,7 +46,13 @@ private const val PLACEHOLDER_RATE = "--"
 const val PREMIUM_CHECKOUT_CALLBACK_URL = "bitwarden://premium-checkout-result"
 
 /**
- * View model for the plan screen, handling the free-user upgrade flow.
+ * Placeholder renewal date until the API provides real data.
+ */
+private const val PLACEHOLDER_RENEWAL_DATE = "--"
+
+/**
+ * View model for the plan screen, serving both free users (upgrade flow) and
+ * premium users (subscription management).
  */
 @Suppress("TooManyFunctions", "LongParameterList")
 @HiltViewModel
@@ -57,16 +64,30 @@ class PlanViewModel @Inject constructor(
     private val specialCircumstanceManager: SpecialCircumstanceManager,
     private val vaultRepository: VaultRepository,
 ) : BaseViewModel<PlanState, PlanEvent, PlanAction>(
-    initialState = savedStateHandle[KEY_STATE]
-        ?: PlanState(
-            planMode = savedStateHandle.toPlanArgs().planMode,
-            viewState = PlanState.ViewState.Free(
-                rate = PLACEHOLDER_RATE,
-                checkoutUrl = null,
-                isAwaitingPremiumStatus = false,
-            ),
+    initialState = savedStateHandle[KEY_STATE] ?: run {
+        val planMode = savedStateHandle.toPlanArgs().planMode
+        val isPremium = authRepository
+            .userStateFlow
+            .value
+            ?.activeAccount
+            ?.isPremium == true
+        PlanState(
+            planMode = planMode,
+            viewState = if (isPremium) {
+                PlanState.ViewState.Premium(
+                    rate = PLACEHOLDER_RATE,
+                    nextRenewalDate = PLACEHOLDER_RENEWAL_DATE,
+                )
+            } else {
+                PlanState.ViewState.Free(
+                    rate = PLACEHOLDER_RATE,
+                    checkoutUrl = null,
+                    isAwaitingPremiumStatus = false,
+                )
+            },
             dialogState = null,
-        ),
+        )
+    },
 ) {
     init {
         stateFlow
@@ -97,10 +118,9 @@ class PlanViewModel @Inject constructor(
     override fun handleAction(action: PlanAction) {
         when (action) {
             is PlanAction.BackClick -> handleBackClick()
-            is PlanAction.UpgradeNowClick -> {
-                handleUpgradeNowClick()
-            }
 
+            // Free user actions
+            is PlanAction.UpgradeNowClick -> handleUpgradeNowClick()
             is PlanAction.DismissError -> handleDismissError()
             is PlanAction.ClosePricingErrorClick -> {
                 handleClosePricingErrorClick()
@@ -117,6 +137,19 @@ class PlanViewModel @Inject constructor(
             is PlanAction.ContinueClick -> handleContinueClick()
             is PlanAction.Internal.CheckoutUrlReceive -> {
                 handleCheckoutUrlReceive(action)
+            }
+
+            // Premium user actions
+            is PlanAction.ManagePlanClick -> handleManagePlanClick()
+            is PlanAction.CancelPremiumClick -> handleCancelPremiumClick()
+            is PlanAction.ConfirmCancelClick -> handleConfirmCancelClick()
+            is PlanAction.DismissCancelConfirmation -> {
+                handleDismissCancelConfirmation()
+            }
+
+            is PlanAction.DismissPortalError -> handleDismissPortalError()
+            is PlanAction.Internal.PortalUrlReceive -> {
+                handlePortalUrlReceive(action)
             }
 
             is PlanAction.Internal.UserStateUpdateReceive -> {
@@ -140,6 +173,8 @@ class PlanViewModel @Inject constructor(
     private fun handleBackClick() {
         sendEvent(PlanEvent.NavigateBack)
     }
+
+    // region Free user handlers
 
     private fun handleUpgradeNowClick() {
         mutableStateFlow.update {
@@ -238,6 +273,71 @@ class PlanViewModel @Inject constructor(
             }
         }
     }
+
+    // endregion Free user handlers
+
+    // region Premium user handlers
+
+    private fun handleManagePlanClick() {
+        launchPortalFetch()
+    }
+
+    private fun handleCancelPremiumClick() {
+        onPremiumContent { premiumState ->
+            mutableStateFlow.update {
+                it.copy(
+                    dialogState = PlanState.DialogState.CancelConfirmation(
+                        nextRenewalDate = premiumState.nextRenewalDate,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun handleConfirmCancelClick() {
+        launchPortalFetch()
+    }
+
+    private fun launchPortalFetch() {
+        mutableStateFlow.update {
+            it.copy(dialogState = PlanState.DialogState.LoadingPortal)
+        }
+        viewModelScope.launch {
+            val result = billingRepository.getPortalUrl()
+            sendAction(
+                PlanAction.Internal.PortalUrlReceive(result),
+            )
+        }
+    }
+
+    private fun handleDismissCancelConfirmation() {
+        mutableStateFlow.update { it.copy(dialogState = null) }
+    }
+
+    private fun handleDismissPortalError() {
+        mutableStateFlow.update { it.copy(dialogState = null) }
+    }
+
+    private fun handlePortalUrlReceive(
+        action: PlanAction.Internal.PortalUrlReceive,
+    ) {
+        when (val result = action.result) {
+            is CustomerPortalResult.Success -> {
+                mutableStateFlow.update { it.copy(dialogState = null) }
+                sendEvent(PlanEvent.LaunchPortal(url = result.url))
+            }
+
+            is CustomerPortalResult.Error -> {
+                mutableStateFlow.update {
+                    it.copy(
+                        dialogState = PlanState.DialogState.PortalError,
+                    )
+                }
+            }
+        }
+    }
+
+    // endregion Premium user handlers
 
     private fun handleUserStateUpdateReceive(
         action: PlanAction.Internal.UserStateUpdateReceive,
@@ -346,33 +446,42 @@ class PlanViewModel @Inject constructor(
             ?.let(block)
     }
 
+    private inline fun onPremiumContent(
+        block: (PlanState.ViewState.Premium) -> Unit,
+    ) {
+        (state.viewState as? PlanState.ViewState.Premium)
+            ?.let(block)
+    }
+
     private fun handlePricingResultReceive(
         action: PlanAction.Internal.PricingResultReceive,
     ) {
-        onFreeContent { freeState ->
-            when (val result = action.result) {
-                is PremiumPlanPricingResult.Success -> {
-                    val formattedRate = NumberFormat
-                        .getCurrencyInstance(Locale.US)
-                        .format(result.annualPrice / MONTHS_PER_YEAR)
-                    mutableStateFlow.update {
-                        it.copy(
-                            viewState = freeState.copy(rate = formattedRate),
-                            dialogState = null,
-                        )
+        when (val result = action.result) {
+            is PremiumPlanPricingResult.Success -> {
+                val formattedRate = NumberFormat
+                    .getCurrencyInstance(Locale.US)
+                    .format(result.annualPrice / MONTHS_PER_YEAR)
+                mutableStateFlow.update { currentState ->
+                    val updatedViewState = when (val vs = currentState.viewState) {
+                        is PlanState.ViewState.Free -> vs.copy(rate = formattedRate)
+                        is PlanState.ViewState.Premium -> vs.copy(rate = formattedRate)
                     }
+                    currentState.copy(
+                        viewState = updatedViewState,
+                        dialogState = null,
+                    )
                 }
+            }
 
-                is PremiumPlanPricingResult.Error -> {
-                    mutableStateFlow.update {
-                        it.copy(
-                            dialogState = PlanState.DialogState.GetPricingError(
-                                title = BitwardenString.an_error_has_occurred.asText(),
-                                message = result.errorMessage?.asText()
-                                    ?: BitwardenString.generic_error_message.asText(),
-                            ),
-                        )
-                    }
+            is PremiumPlanPricingResult.Error -> {
+                mutableStateFlow.update {
+                    it.copy(
+                        dialogState = PlanState.DialogState.GetPricingError(
+                            title = BitwardenString.an_error_has_occurred.asText(),
+                            message = result.errorMessage?.asText()
+                                ?: BitwardenString.generic_error_message.asText(),
+                        ),
+                    )
                 }
             }
         }
@@ -438,6 +547,16 @@ data class PlanState(
         }
 
     /**
+     * The title string resource for the top app bar.
+     */
+    @get:StringRes
+    val title: Int
+        get() = when (viewState) {
+            is ViewState.Free -> BitwardenString.upgrade_to_premium
+            is ViewState.Premium -> BitwardenString.plan
+        }
+
+    /**
      * Models the content state of the plan screen.
      */
     sealed class ViewState : Parcelable {
@@ -455,6 +574,16 @@ data class PlanState(
             override val rate: String,
             val checkoutUrl: String?,
             val isAwaitingPremiumStatus: Boolean,
+        ) : ViewState()
+
+        /**
+         * Premium user view — shows subscription details and
+         * management options.
+         */
+        @Parcelize
+        data class Premium(
+            override val rate: String,
+            val nextRenewalDate: String,
         ) : ViewState()
     }
 
@@ -499,6 +628,27 @@ data class PlanState(
          */
         @Parcelize
         data object PendingUpgrade : DialogState()
+
+        /**
+         * Confirmation dialog before cancelling premium.
+         */
+        @Parcelize
+        data class CancelConfirmation(
+            val nextRenewalDate: String,
+        ) : DialogState()
+
+        /**
+         * Loading overlay while fetching the portal URL.
+         */
+        @Parcelize
+        data object LoadingPortal : DialogState()
+
+        /**
+         * Error dialog shown when the portal URL could not be
+         * loaded.
+         */
+        @Parcelize
+        data object PortalError : DialogState()
     }
 }
 
@@ -517,6 +667,13 @@ sealed class PlanEvent {
     ) : PlanEvent()
 
     /**
+     * Launch the user's browser with the given portal [url] via intent.
+     */
+    data class LaunchPortal(
+        val url: String,
+    ) : PlanEvent()
+
+    /**
      * Navigate back to the previous screen.
      */
     data object NavigateBack : PlanEvent()
@@ -531,6 +688,8 @@ sealed class PlanAction {
      * The user clicked the back/close button.
      */
     data object BackClick : PlanAction()
+
+    // region Free user actions
 
     /**
      * The user clicked the upgrade now button.
@@ -577,6 +736,37 @@ sealed class PlanAction {
      */
     data object ContinueClick : PlanAction()
 
+    // endregion Free user actions
+
+    // region Premium user actions
+
+    /**
+     * The user clicked the manage plan button.
+     */
+    data object ManagePlanClick : PlanAction()
+
+    /**
+     * The user clicked the cancel premium button.
+     */
+    data object CancelPremiumClick : PlanAction()
+
+    /**
+     * The user confirmed cancellation in the confirmation dialog.
+     */
+    data object ConfirmCancelClick : PlanAction()
+
+    /**
+     * The user dismissed the cancel confirmation dialog.
+     */
+    data object DismissCancelConfirmation : PlanAction()
+
+    /**
+     * The user dismissed the portal error dialog.
+     */
+    data object DismissPortalError : PlanAction()
+
+    // endregion Premium user actions
+
     /**
      * Models actions the view model sends itself.
      */
@@ -588,6 +778,14 @@ sealed class PlanAction {
          */
         data class CheckoutUrlReceive(
             val result: CheckoutSessionResult,
+        ) : Internal()
+
+        /**
+         * A portal URL result has been received from the
+         * repository.
+         */
+        data class PortalUrlReceive(
+            val result: CustomerPortalResult,
         ) : Internal()
 
         /**
